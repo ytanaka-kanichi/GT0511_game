@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リバーシ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #f3f4f6;
+            touch-action: manipulation;
+        }
+
+        .board-container {
+            background-color: #111827; /* 盤面の枠色（黒） */
+            padding: 4px;
+            border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            gap: 2px; /* グリッド線の太さ */
+            background-color: #111827;
+            width: 100%;
+            max-width: 400px;
+            aspect-ratio: 1 / 1;
+        }
+
+        .cell {
+            background-color: #16a34a; /* 盤面の緑色 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .cell:hover {
+            background-color: #15803d; /* ホバー時に少し暗く */
+        }
+
+        /* 3Dフリップアニメーション用のスタイル */
+        .disc {
+            width: 85%;
+            height: 85%;
+            border-radius: 50%;
+            perspective: 1000px;
+            pointer-events: none; /* クリックイベントは親のcellで受け取る */
+        }
+
+        .disc-inner {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            transition: transform 0.4s cubic-bezier(0.4, 0.0, 0.2, 1);
+            transform-style: preserve-3d;
+            position: relative;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .disc-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            backface-visibility: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .disc-black {
+            background: radial-gradient(circle at 30% 30%, #444, #000);
+            transform: rotateY(0deg);
+        }
+
+        .disc-white {
+            background: radial-gradient(circle at 30% 30%, #fff, #ccc);
+            transform: rotateY(180deg);
+        }
+
+        /* 状態クラス */
+        .state-black .disc-inner {
+            transform: rotateY(0deg);
+        }
+
+        .state-white .disc-inner {
+            transform: rotateY(180deg);
+        }
+
+        /* 置ける場所のインジケーター */
+        .valid-move-indicator {
+            width: 25%;
+            height: 25%;
+            border-radius: 50%;
+            background-color: rgba(0, 0, 0, 0.2);
+            pointer-events: none;
+        }
+        
+        .turn-active {
+            box-shadow: 0 0 0 4px #3b82f6;
+            transform: scale(1.05);
+            transition: all 0.2s;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center py-10 font-sans text-gray-800">
+
+    <h1 class="text-3xl font-bold mb-6 text-gray-900">リバーシ</h1>
+
+    <!-- スコアボード -->
+    <div class="flex w-full max-w-md justify-between items-center px-4 mb-6">
+        <div id="black-score-card" class="flex flex-col items-center bg-white px-6 py-3 rounded-lg shadow-md transition-all">
+            <div class="w-8 h-8 rounded-full bg-black mb-2 shadow-inner border border-gray-600"></div>
+            <span class="text-sm font-bold text-gray-500">黒 (あなた)</span>
+            <span id="black-score" class="text-2xl font-black">2</span>
+        </div>
+
+        <div class="flex flex-col items-center text-center px-4">
+            <div id="turn-indicator" class="text-lg font-bold text-blue-600 mb-1">黒の番です</div>
+            <div id="message-box" class="text-sm text-red-500 font-bold h-5"></div>
+        </div>
+
+        <div id="white-score-card" class="flex flex-col items-center bg-white px-6 py-3 rounded-lg shadow-md transition-all">
+            <div class="w-8 h-8 rounded-full bg-white mb-2 shadow-sm border border-gray-300"></div>
+            <span class="text-sm font-bold text-gray-500">白 (あいて)</span>
+            <span id="white-score" class="text-2xl font-black">2</span>
+        </div>
+    </div>
+
+    <!-- ゲーム盤 -->
+    <div class="board-container w-full max-w-[400px] px-4 sm:px-0">
+        <div id="board" class="board">
+            <!-- JavaScriptでセルを生成します -->
+        </div>
+    </div>
+
+    <!-- コントロール -->
+    <div class="mt-8">
+        <button onclick="initGame()" class="bg-gray-800 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded-full shadow transition-colors flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            最初からやり直す
+        </button>
+    </div>
+
+    <script>
+        const BOARD_SIZE = 8;
+        const EMPTY = 0;
+        const BLACK = 1;
+        const WHITE = 2;
+
+        // 8方向（上、右上、右、右下、下、左下、左、左上）
+        const DIRECTIONS = [
+            [-1, 0], [-1, 1], [0, 1], [1, 1],
+            [1, 0], [1, -1], [0, -1], [-1, -1]
+        ];
+
+        let board = [];
+        let currentPlayer = BLACK;
+        let isProcessing = false; // アニメーション中の連打防止
+
+        const boardElement = document.getElementById('board');
+        const blackScoreEl = document.getElementById('black-score');
+        const whiteScoreEl = document.getElementById('white-score');
+        const turnIndicatorEl = document.getElementById('turn-indicator');
+        const messageBoxEl = document.getElementById('message-box');
+        const blackScoreCard = document.getElementById('black-score-card');
+        const whiteScoreCard = document.getElementById('white-score-card');
+
+        // ゲームの初期化
+        function initGame() {
+            // 盤面をクリア (8x8の2次元配列)
+            board = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(EMPTY));
+
+            // 初期配置
+            board[3][3] = WHITE;
+            board[3][4] = BLACK;
+            board[4][3] = BLACK;
+            board[4][4] = WHITE;
+
+            currentPlayer = BLACK;
+            isProcessing = false;
+            messageBoxEl.textContent = '';
+
+            renderBoard();
+            updateUI();
+        }
+
+        // 盤面の描画
+        function renderBoard() {
+            boardElement.innerHTML = ''; // クリア
+
+            // 全セルを走査してHTMLを生成
+            for (let row = 0; row < BOARD_SIZE; row++) {
+                for (let col = 0; col < BOARD_SIZE; col++) {
+                    const cellValue = board[row][col];
+                    const cellEl = document.createElement('div');
+                    cellEl.className = 'cell';
+                    cellEl.dataset.row = row;
+                    cellEl.dataset.col = col;
+
+                    // コマの描画
+                    if (cellValue !== EMPTY) {
+                        const disc = createDisc(cellValue);
+                        cellEl.appendChild(disc);
+                    } 
+                    // 置ける場所のインジケーター表示（空マスかつ置ける場合）
+                    else if (getFlippableDiscs(row, col, currentPlayer).length > 0) {
+                        const indicator = document.createElement('div');
+                        indicator.className = 'valid-move-indicator';
+                        cellEl.appendChild(indicator);
+                    }
+
+                    // クリックイベント
+                    cellEl.addEventListener('click', () => handleCellClick(row, col));
+                    boardElement.appendChild(cellEl);
+                }
+            }
+        }
+
+        // コマのDOM要素を生成
+        function createDisc(color) {
+            const disc = document.createElement('div');
+            disc.className = `disc state-${color === BLACK ? 'black' : 'white'}`;
+            
+            const inner = document.createElement('div');
+            inner.className = 'disc-inner';
+
+            const front = document.createElement('div');
+            front.className = 'disc-face disc-black';
+            
+            const back = document.createElement('div');
+            back.className = 'disc-face disc-white';
+
+            inner.appendChild(front);
+            inner.appendChild(back);
+            disc.appendChild(inner);
+
+            return disc;
+        }
+
+        // クリック処理
+        async function handleCellClick(row, col) {
+            if (isProcessing) return;
+            if (board[row][col] !== EMPTY) return;
+
+            const flippable = getFlippableDiscs(row, col, currentPlayer);
+            if (flippable.length === 0) return; // 置けない場所
+
+            isProcessing = true;
+
+            // コマを置く
+            board[row][col] = currentPlayer;
+            updateCellDOM(row, col, currentPlayer);
+
+            // コマを裏返す
+            for (const [fRow, fCol] of flippable) {
+                board[fRow][fCol] = currentPlayer;
+                // 少し時間差をつけてアニメーションさせる
+                await new Promise(r => setTimeout(r, 100)); 
+                updateCellDOM(fRow, fCol, currentPlayer);
+            }
+
+            // スコア更新
+            updateUI();
+
+            // ターン交代の処理
+            await new Promise(r => setTimeout(r, 300));
+            switchTurn();
+            
+            isProcessing = false;
+        }
+
+        // 特定のセルのDOMだけを更新（アニメーションのため）
+        function updateCellDOM(row, col, color) {
+            const index = row * BOARD_SIZE + col;
+            const cell = boardElement.children[index];
+            
+            // 既存のインジケーターを削除
+            cell.innerHTML = '';
+            
+            // 新しい（または裏返った）コマを追加
+            cell.appendChild(createDisc(color));
+        }
+
+        // その場所に置いた場合、裏返せるコマの座標リストを返す
+        function getFlippableDiscs(row, col, player) {
+            if (board[row][col] !== EMPTY) return [];
+
+            const opponent = player === BLACK ? WHITE : BLACK;
+            const flippableDiscs = [];
+
+            // 8方向をチェック
+            for (const [dRow, dCol] of DIRECTIONS) {
+                let r = row + dRow;
+                let c = col + dCol;
+                const currentDirectionFlippable = [];
+
+                // 相手のコマが続く限り進む
+                while (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE && board[r][c] === opponent) {
+                    currentDirectionFlippable.push([r, c]);
+                    r += dRow;
+                    c += dCol;
+                }
+
+                // 相手のコマを挟んだ先に自分のコマがあれば、ひっくり返せるリストに追加
+                if (currentDirectionFlippable.length > 0 && 
+                    r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE && 
+                    board[r][c] === player) {
+                    flippableDiscs.push(...currentDirectionFlippable);
+                }
+            }
+
+            return flippableDiscs;
+        }
+
+        // プレイヤーが置ける場所があるかチェック
+        function hasValidMoves(player) {
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    if (getFlippableDiscs(r, c, player).length > 0) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // ターン交代と終了判定
+        function switchTurn() {
+            const nextPlayer = currentPlayer === BLACK ? WHITE : BLACK;
+
+            // 次のプレイヤーに置ける場所があるか
+            if (hasValidMoves(nextPlayer)) {
+                currentPlayer = nextPlayer;
+                renderBoard(); // インジケーターの再描画
+                updateUI();
+                return;
+            }
+
+            // 次のプレイヤーが置けない場合はパス
+            const originalPlayer = currentPlayer;
+            if (hasValidMoves(originalPlayer)) {
+                showMessage("パス！置ける場所がありません");
+                renderBoard(); // 現在のプレイヤーのまま再描画
+                return;
+            }
+
+            // どちらも置けない場合はゲーム終了
+            finishGame();
+        }
+
+        // スコアとUIの更新
+        function updateUI() {
+            let blackCount = 0;
+            let whiteCount = 0;
+
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    if (board[r][c] === BLACK) blackCount++;
+                    if (board[r][c] === WHITE) whiteCount++;
+                }
+            }
+
+            blackScoreEl.textContent = blackCount;
+            whiteScoreEl.textContent = whiteCount;
+
+            if (currentPlayer === BLACK) {
+                turnIndicatorEl.textContent = "黒の番です";
+                turnIndicatorEl.className = "text-lg font-bold text-gray-800 mb-1";
+                blackScoreCard.classList.add('turn-active');
+                whiteScoreCard.classList.remove('turn-active');
+            } else {
+                turnIndicatorEl.textContent = "白の番です";
+                turnIndicatorEl.className = "text-lg font-bold text-gray-500 mb-1";
+                whiteScoreCard.classList.add('turn-active');
+                blackScoreCard.classList.remove('turn-active');
+            }
+        }
+
+        // メッセージの一時表示
+        function showMessage(msg) {
+            messageBoxEl.textContent = msg;
+            setTimeout(() => {
+                if (messageBoxEl.textContent === msg) messageBoxEl.textContent = '';
+            }, 3000);
+        }
+
+        // ゲーム終了処理
+        function finishGame() {
+            let blackCount = 0;
+            let whiteCount = 0;
+
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    if (board[r][c] === BLACK) blackCount++;
+                    if (board[r][c] === WHITE) whiteCount++;
+                }
+            }
+
+            renderBoard(); // インジケーターを消すための再描画
+            blackScoreCard.classList.remove('turn-active');
+            whiteScoreCard.classList.remove('turn-active');
+
+            if (blackCount > whiteCount) {
+                turnIndicatorEl.textContent = "黒の勝ち！🎉";
+                turnIndicatorEl.className = "text-xl font-bold text-gray-900 mb-1";
+            } else if (whiteCount > blackCount) {
+                turnIndicatorEl.textContent = "白の勝ち！🎉";
+                turnIndicatorEl.className = "text-xl font-bold text-gray-500 mb-1";
+            } else {
+                turnIndicatorEl.textContent = "引き分け！🤝";
+                turnIndicatorEl.className = "text-xl font-bold text-blue-500 mb-1";
+            }
+            
+            messageBoxEl.textContent = "ゲーム終了";
+        }
+
+        // 初期化実行
+        initGame();
+    </script>
+</body>
+</html>
